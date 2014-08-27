@@ -1,0 +1,250 @@
+
+"""
+Taken from sklearn.gaussian_process module and stripped out naked to the bare minimum
+"""
+
+from scipy import linalg as LA
+import scipy as sp
+from sklearn.utils import array2d
+from sklearn.gaussian_process import correlation_models
+import Cholesky
+
+MACHINE_EPSILON = sp.finfo(sp.double).eps    
+
+
+def kernel(d, theta, correlation='squared_exponential'):
+    if correlation is 'absolute_exponential':
+        return sp.exp(-d / theta) # correlation_models.absolute_exponential(theta, d)
+    elif  correlation is 'squared_exponential':
+        return sp.exp(-d**2 / (2.0 * theta**2)) # correlation_models.squared_exponential(theta, d)
+    elif  correlation is 'generalized_exponential':
+        return correlation_models.generalized_exponential(theta, d)
+    elif  correlation is 'cubic':
+        return correlation_models.cubic(theta, d)
+    elif  correlation is 'linear':
+        return correlation_models.linear(theta, d)
+    else:
+        print "Correlation model %s not understood" % correlation
+        return None
+    
+
+class GaussianProcess:
+    """
+    corr : string or callable, optional
+        A stationary autocorrelation function returning the autocorrelation
+        between two points x and x'.
+        Default assumes a squared-exponential autocorrelation model.
+        Built-in correlation models are::
+            'absolute_exponential', 'squared_exponential',
+            NOT YET 'generalized_exponential', 'cubic', 'linear'
+            
+    verbose : boolean, optional
+        A boolean specifying the verbose level.
+        Default is verbose = False.
+        
+    theta0 : double array_like, optional
+        An array with shape (n_features, ) or (1, ).
+        The parameters in the autocorrelation model.
+        If thetaL and thetaU are also specified, theta0 is considered as
+        the starting point for the maximum likelihood estimation of the
+        best set of parameters.
+        Default assumes isotropic autocorrelation model with theta0 = 1e-1.
+
+    normalise : boolean, optional
+        Input X and observations y are centered and reduced wrt
+        means and standard deviations estimated from the n_samples
+        observations provided.
+        Default is normalise = True so that data is normalised to ease
+        maximum likelihood estimation.
+
+    nugget : double or ndarray, optional
+        Introduce a nugget effect to allow smooth predictions from noisy
+        data.  If nugget is an ndarray, it must be the same length as the
+        number of data points used for the fit.
+        The nugget is added to the diagonal of the assumed training covariance;
+        in this way it acts as a Tikhonov regularization in the problem.  In
+        the special case of the squared exponential correlation function, the
+        nugget mathematically represents the variance of the input values.
+        Default assumes a nugget close to machine precision for the sake of
+        robustness (nugget = 10. * MACHINE_EPSILON).
+    """
+
+
+    def __init__(self, corr='squared_exponential', verbose=False, theta0=1e-1,
+                 normalise=True, nugget=10. * MACHINE_EPSILON,
+                 low_memory=False, do_features_projection=False):
+
+        self.corr = corr
+        self.verbose = verbose
+        self.theta0 = theta0
+        self.normalise = normalise
+        self.nugget = nugget
+        self.low_memory = low_memory
+        self.do_features_projection = do_features_projection
+
+    def fit(self, X, y):
+        """
+        The Gaussian Process model fitting method.
+
+        Parameters
+        ----------
+        X : double array_like
+            An array with shape (n_samples, n_features) with the input at which
+            observations were made.
+
+        y : double array_like
+            An array with shape (n_samples, ) or shape (n_samples, n_targets)
+            with the observations of the output to be predicted.
+
+        Returns
+        -------
+        gp : self
+            A fitted Gaussian Process model object awaiting data to perform
+            predictions.
+        """
+        
+        # Force data to 2D numpy.array
+        X = array2d(X)
+        y = sp.asarray(y)
+        self.y_ndim_ = y.ndim
+        if y.ndim == 1:
+            y = y[:, sp.newaxis]
+        n_samples, n_features = X.shape
+        _, n_targets = y.shape
+
+        # Normalise data or don't
+        if self.normalise:
+            X_mean = sp.mean(X, axis=0)
+            X_std = sp.std(X, axis=0)
+            y_mean = sp.mean(y, axis=0)
+            y_std = sp.std(y, axis=0)
+            X_std[X_std == 0.] = 1.
+            y_std[y_std == 0.] = 1.
+            # center and scale X if necessary
+            X = (X - X_mean) / X_std
+            y = (y - y_mean) / y_std
+        else:
+            X_mean = 0.0 
+            X_std  = 1.0 
+            y_mean = 0.0
+            y_std  = 1.0
+
+        # Calculate distance matrix in vector form. The matrix form of X is obtained by scipy.spatial.distance.squareform(X)
+        D = sp.spatial.distance.pdist(X)
+        D = sp.spatial.distance.squareform(D)
+        # Covariance matrix K
+        # sklearn correlation doesn't work. Probably correlation_models needs some different inputs 
+        K = kernel(D, self.theta0, correlation=self.corr) 
+        err = 'bb'
+        # Cholesky.CholeskyInverse(Cholesky.Cholesky(K + self.nugget * sp.eye(n_samples))) This method should work but doesn't
+        try:
+            inverse = LA.inv(K + self.nugget * sp.ones(n_samples))
+        except  LA.LinAlgError as err:
+            print "inv method failed, switching to pinv", err
+            try:
+                inverse = LA.pinvh(K + self.nugget * sp.eye(n_samples))
+            except LA.LinAlgError as err:
+                print "pinvh method failed, switching to pinv2", err
+                try:
+                    inverse = LA.pinv2(K + self.nugget * sp.eye(n_samples))
+                except LA.LinAlgError as err:
+                    print "even pinv2 failed, the covariance matrix cannot be inverted", err
+                    inverse = None
+
+        # alpha is the vector of regression coefficients of GaussianProcess
+        alpha = sp.dot(inverse, y)
+
+        self.X = X
+        self.y = y
+        if not self.low_memory:
+            self.D = D
+            self.K = K
+        self.inverse = inverse
+        self.alpha = alpha
+        self.X_mean, self.X_std = X_mean, X_std
+        self.y_mean, self.y_std = y_mean, y_std
+
+    def predict(self, X, eval_MSE=False):
+        """
+        This function evaluates the Gaussian Process model at x.
+
+        Parameters
+
+        X : array_like
+            An array with shape (n_eval, n_features) giving the point(s) at
+            which the prediction(s) should be made.
+
+        eval_MSE : boolean, optional
+            A boolean specifying whether the Mean Squared Error should be
+            evaluated or not.
+            Default assumes evalMSE = False and evaluates only the BLUP (mean
+            prediction).
+
+        batch_size : integer, optional
+            An integer giving the maximum number of points that can be
+            evaluated simultaneously (depending on the available memory).
+            Default is None so that all given points are evaluated at the same
+            time.
+
+        Returns
+        -------
+        y : array_like, shape (n_samples, ) or (n_samples, n_targets)
+            An array with shape (n_eval, ) if the Gaussian Process was trained
+            on an array of shape (n_samples, ) or an array with shape
+            (n_eval, n_targets) if the Gaussian Process was trained on an array
+            of shape (n_samples, n_targets) with the Best Linear Unbiased
+            Prediction at x.
+
+        MSE : array_like, optional (if eval_MSE == True)
+            An array with shape (n_eval, ) or (n_eval, n_targets) as with y,
+            with the Mean Squared Error at x.
+        """
+        
+        # Check input shapes
+        X = array2d(X)
+        n_eval, _ = X.shape
+        n_samples, n_features = self.X.shape
+        n_samples_y, n_targets = self.y.shape
+        
+        if X.shape[1] != n_features:
+            raise ValueError(("The number of features in X (X.shape[1] = %d) "
+                              "should match the number of features used "
+                              "for fit() "
+                              "which is %d.") % (X.shape[1], n_features))
+
+        X = (X - self.X_mean) / self.X_std
+
+        # Initialize output
+        y = sp.zeros(n_eval)
+        if eval_MSE:
+            MSE = sp.zeros(n_eval)
+
+        # Get distances between each new point in X and all input training set
+        # dx = sp.asarray([[ LA.norm(p-q) for q in self.X] for p in X]) # SLOW!!!
+        dx = (((self.X - X[:,None])**2).sum(axis=2))**0.5
+        # Evaluate correlation
+        k = kernel(dx, self.theta0, self.corr)
+
+        # UNNECESSARY: feature relevance
+        if self.do_features_projection:
+            self.feat_proj = self.alpha.flatten() * k
+            y_scaled = self.feat_proj.sum(axis=1)
+        else:
+        # Scaled predictor
+            y_scaled = sp.dot(k, self.alpha)
+        # Predictor
+        y = (self.y_mean + self.y_std * y_scaled).reshape(n_eval, n_targets)
+        if self.y_ndim_ == 1:
+            y = y.ravel()
+
+        # Calculate mean square error of each prediction
+        if eval_MSE:
+            MSE = sp.dot(sp.dot(k, self.inverse), k.T)
+            if k.ndim > 1: MSE = sp.diagonal(MSE)
+            MSE = kernel(0.0, self.theta0, self.corr) - MSE
+            # Mean Squared Error might be slightly negative depending on
+            # machine precision: force to zero!
+            MSE[MSE < MACHINE_EPSILON] = 0.
+            if self.y_ndim_ == 1:
+                MSE = MSE.ravel()
+        return y, MSE
