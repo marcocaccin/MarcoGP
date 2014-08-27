@@ -12,9 +12,18 @@ import matplotlib.pyplot as plt
 
 
 # --------------------------------------------
+# WHAT IT DOES:
+# Given Ntest configurations to keep track of,
+# For increasing number Ntot of configurations:
+#    - Teach all of them and save their regression coefficients alpha
+#    - Do a second teaching not including the test configurations
+#    - Predict energy of test configurations using 2nd teaching and evaluate error
+# Plot alpha vs. error // alpha STD vs. MAE error
+# --------------------------------------------
+
+# --------------------------------------------
 # Parameters for the run
 # --------------------------------------------
-do_predict = False
 split = 1
 N_models = 1
 theta0 = 10.0
@@ -40,6 +49,7 @@ nteach = sp.int32(sp.exp(sp.linspace(sp.log(2*Ntest), sp.log(allP.size), 25)))
 alpha = []
 alpha_std = []
 mae_error = []
+errors = []
 for Nteach in nteach:
 
     # --------------------------------------------
@@ -72,21 +82,14 @@ for Nteach in nteach:
     local_alpha = gp.alpha[:Ntest]
     print "alpha STD: %f" % sp.std(local_alpha)
     print "alpha MAV: %f" % sp.mean(sp.absolute(local_alpha))
-    # alpha.append(local_alpha.flatten())
+    alpha.append(local_alpha.flatten())
     alpha_std.append(sp.std(local_alpha))
 
-
     # --------------------------------------------
-    # Second time dont' include the test set and predict
+    # Second time don't include the test set and predict
     # --------------------------------------------    
-    print "\n", "-"*60, "\n"
-    # Select training data
-    X = dataset['X'][P]
-    T = dataset['T'][P]
-    # --------------------------------------------
     # Extract feature(s) from training data and test set
     # --------------------------------------------
-    # in this case, only sorted eigenvalues of Coulomb matrix
     eigt = eigX[:Ntest]
     eigX = eigX[Ntest:]
 
@@ -108,20 +111,33 @@ for Nteach in nteach:
     y_pred, MSE = gp.predict(eigt, eval_MSE=True)
     sigma = sp.sqrt(MSE)
     mae_error.append(sp.absolute(y_pred-y_test).mean(axis=0))
+    errors.append(sp.absolute(y_pred-y_test))
     print('\n test set:')
     print('MAE:  %5.2f kcal/mol' % sp.absolute(y_pred-y_test).mean(axis=0))
     print('RMSE: %5.2f kcal/mol' % sp.square(y_pred-y_test).mean(axis=0)**.5)
     print "TIMER predict", time.clock() - ttt
 
-plt.plot(alpha_std, mae_error, 'o')
-plt.xlabel("regression coefficients STD")
-plt.ylabel("mean absolute error")
-plt.savefig('alphastd_vs_maeerror.png')
-# alpha = sp.array(alpha).T
-# for i, a in enumerate(alpha):
-#     plt.subplot(521+i)
-#     plt.semilogx(nteach, a)
-# plt.subplots_adjust(hspace=1)
-# plt.subplots_adjust(wspace=1)
-# plt.savefig('myplot2.png')
+# Plot alpha STD vs. MAE error scatter (1 plot, dots, ~ 1 line)
+# plt.plot(alpha_std, mae_error, 'o')
+# plt.xlabel("regression coefficients STD")
+# plt.ylabel("mean absolute error")
+# plt.savefig('alphastd_vs_maeerror.png')
+
+
+# Plot alpha vs. error scatter for selected test confs (1 plot, nplots <= Ntest lines)
+nplots = 8
+alpha = sp.array(alpha).T
+errors = sp.array(errors).T
+for a, err in zip(alpha[:nplots], errors[:nplots]):
+    plt.plot(a, err, 'o')
+plt.xlabel("regression coefficient")
+plt.ylabel("absolute error [kcal/mol]")
+plt.savefig('alpha_vs_error.png')
+
+for a, err in zip(alpha, errors):
+    plt.plot(a, err, 'o')
+plt.xlabel("regression coefficient")
+plt.ylabel("absolute error [kcal/mol]")
+plt.savefig('alpha_vs_error_all.png')
+
 # # sp.save("alphas.npy", sp.array(alpha))

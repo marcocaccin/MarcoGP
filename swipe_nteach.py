@@ -10,6 +10,13 @@ from scipy.linalg import eigh
 from my_gp_module import GaussianProcess
 import matplotlib.pyplot as plt
 
+# --------------------------------------------
+# WHAT IT DOES:
+# Given Nfixed configurations to keep track of,
+# For increasing number Ntot of configurations Ntot >= Nfixed:
+#    - Look at alpha[:Nfixed] varies as the learning set varies
+# Plot Nteach vs. alpha // Nteach vs. alpha STD
+# --------------------------------------------
 
 # --------------------------------------------
 # Parameters for the run
@@ -73,7 +80,6 @@ for Nteach in nteachs:
     # alpha.append(gp.alpha.flatten()[:Nfixed].copy())
     # covmat.append(gp.K.copy())
     # print "projections STD"
-    # print [sp.std(proj) for proj in gp.feat_proj]
     print "alpha STD: %f" % sp.std(gp.alpha[:Nfixed])
     print "alpha MAV: %f" % sp.mean(sp.absolute(gp.alpha[:Nfixed]))
     alpha_std.append(sp.std(gp.alpha.flatten()[:Nfixed]))
@@ -94,18 +100,26 @@ for Nteach in nteachs:
         print('RMSE: %5.2f kcal/mol' % sp.square(y_pred-Ttest.ravel()).mean(axis=0)**.5)
         print "TIMER predict", time.clock() - ttt
 
-# alpha = sp.array(alpha).T
-# plt.subplot(111)
 
+# Spaghetti plot
+alpha = sp.array(alpha).T
 for i, a in enumerate(alpha):
     plt.semilogx(nteachs, a)
 plt.xlabel("Learning set size")
 plt.ylabel("regression coefficients")
+plt.savefig('alphas_vs_Nteach_spaghetti_%d.png' % Nfixed)
+
+
 # plt.subplots_adjust(hspace=1)
 # plt.subplots_adjust(wspace=1)
 
+
+# STD plot (one curve)
+# plt.subplot(111)
 # plt.semilogx(nteachs, alpha_std, 'o')
 # plt.xlabel("Learning set size")
 # plt.ylabel("regression coefficients STD")
-plt.savefig('alphastd_vs_Nteach_spaghetti.png')
+# plt.savefig('alphastd_vs_Nteach_%d.png' % Nfixed)
+
+# Save regression coefficients
 # sp.save("alphas.npy", sp.array(alpha))

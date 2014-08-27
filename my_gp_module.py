@@ -140,15 +140,15 @@ class GaussianProcess:
         try:
             inverse = LA.inv(K + self.nugget * sp.ones(n_samples))
         except  LA.LinAlgError as err:
-            print "inv method failed, switching to pinv", err
+            print "inv failed: %s. Switching to pinvh" % err
             try:
                 inverse = LA.pinvh(K + self.nugget * sp.eye(n_samples))
             except LA.LinAlgError as err:
-                print "pinvh method failed, switching to pinv2", err
+                print "pinvh failed: %s. Switching to pinvh" % err
                 try:
                     inverse = LA.pinv2(K + self.nugget * sp.eye(n_samples))
                 except LA.LinAlgError as err:
-                    print "even pinv2 failed, the covariance matrix cannot be inverted", err
+                    print "pinv2 failed: %s. Failed to invert matrix." % err
                     inverse = None
 
         # alpha is the vector of regression coefficients of GaussianProcess
