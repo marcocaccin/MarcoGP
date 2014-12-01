@@ -72,8 +72,7 @@ class GaussianProcess:
         Input X and observations y are centered and reduced wrt
         means and standard deviations estimated from the n_samples
         observations provided.
-        Default is normalise = True so that data is normalised to ease
-        maximum likelihood estimation.
+        Default is normalise = 1 so that both input and output data are normalised
 
     nugget : double or ndarray, optional
         Introduce a nugget effect to allow smooth predictions from noisy
@@ -137,8 +136,8 @@ class GaussianProcess:
         X = array2d(X)
         n_samples, n_features = X.shape
 
-        # Normalise input data or not
-        if self.normalise == 1:
+        # Normalise input data or not. Do if normalise is 1 (all normalise) or 2 (input normalise)
+        if self.normalise > 0:
             X_mean = sp.mean(X, axis=0)
             X_std = sp.std(X, axis=0)
             X_std[X_std == 0.] = 1.
@@ -209,7 +208,7 @@ class GaussianProcess:
             # print "is symmetric", Cholesky.isSymmetric(inverse)
             # upper_triang = Cholesky.Cholesky(inverse)
             # inverse = Cholesky.CholeskyInverse(upper_triang)
-            inverse = sp.matrix(K + self.nugget * sp.ones(n_samples)).I
+            inverse = LA.inv(inverse)
         except LA.LinAlgError as err:
             print "inv failed: %s. Switching to pinvh" % err
             try:
@@ -229,7 +228,7 @@ class GaussianProcess:
         self.y_mean, self.y_std = y_mean, y_std
         if not self.low_memory:
             self.inverse = inverse
-        self.alpha = alpha
+        self.alpha = sp.array(alpha)
         
 
     def predict(self, X, eval_MSE=False, return_k=False):
@@ -368,7 +367,7 @@ class GaussianProcess:
             self.D = D
             self.K = K
         self.inverse = inverse
-        self.alpha = alpha
+        self.alpha = sp.array(alpha)
         self.X_mean, self.X_std = 1.0, 0.0
         self.y_mean, self.y_std = 1.0, 0.0
 
