@@ -150,6 +150,12 @@ class GaussianProcess:
         # Calculate distance matrix in vector form. The matrix form of X is obtained by scipy.spatial.distance.squareform(X)
         D = sp.spatial.distance.pdist(X)
         D = sp.spatial.distance.squareform(D)
+        
+        # Divide each distance ij by sqrt(N_i * N_j)
+        if normalise == -1:
+            natoms = (X != 0.).sum(1)
+            D = D / sp.sqrt(sp.outer(natoms, natoms))
+            
         # Covariance matrix K
         # sklearn correlation doesn't work. Probably correlation_models needs some different inputs 
         K = kernel(D, self.theta0, correlation=self.corr) 
@@ -289,6 +295,12 @@ class GaussianProcess:
         # Get distances between each new point in X and all input training set
         # dx = sp.asarray([[ LA.norm(p-q) for q in self.X] for p in X]) # SLOW!!!
         dx = (((self.X - X[:,None])**2).sum(axis=2))**0.5
+
+        if self.normalise == -1:
+            natoms_db = (self.X != 0.).sum(1)
+            natoms_t = (X != 0.).sum(1)
+            dx = dx / np.sqrt(natoms_db * natoms_t[:, None])
+
         # Evaluate correlation
         k = kernel(dx, self.theta0, self.corr)
 

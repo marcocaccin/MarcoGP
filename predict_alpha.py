@@ -56,11 +56,11 @@ def teach_database_plusone(GP, X, y, X_t, y_t):
 # --------------------------------------------
 split = 1
 N_models = 1
-theta0 = 1.0e+1
+theta0 = 1.0e+2
 nugget = 1.0e-3
-normalise = 2
+normalise = -1
 
-Ntest = 50
+Ntest = 10
 Nteach = 2000
 Ndatabases = 1
 
