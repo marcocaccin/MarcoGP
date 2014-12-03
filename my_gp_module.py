@@ -89,7 +89,7 @@ class GaussianProcess:
 
     def __init__(self, corr='squared_exponential', verbose=False, theta0=1e-1,
                  normalise=1, nugget=10. * MACHINE_EPSILON,
-                 low_memory=False, do_features_projection=False):
+                 low_memory=False, do_features_projection=False, metric='euclidean'):
 
         self.corr = corr
         self.verbose = verbose
@@ -98,6 +98,7 @@ class GaussianProcess:
         self.nugget = nugget
         self.low_memory = low_memory
         self.do_features_projection = do_features_projection
+        self.metric = metric
 
     def flush_data(self):
         self.X = None
@@ -148,11 +149,11 @@ class GaussianProcess:
             X_std  = 1.0 
 
         # Calculate distance matrix in vector form. The matrix form of X is obtained by scipy.spatial.distance.squareform(X)
-        D = sp.spatial.distance.pdist(X)
+        D = sp.spatial.distance.pdist(X, metric = self.metric)
         D = sp.spatial.distance.squareform(D)
         
         # Divide each distance ij by sqrt(N_i * N_j)
-        if normalise == -1:
+        if self.normalise == -1:
             natoms = (X != 0.).sum(1)
             D = D / sp.sqrt(sp.outer(natoms, natoms))
             
@@ -294,12 +295,18 @@ class GaussianProcess:
 
         # Get distances between each new point in X and all input training set
         # dx = sp.asarray([[ LA.norm(p-q) for q in self.X] for p in X]) # SLOW!!!
-        dx = (((self.X - X[:,None])**2).sum(axis=2))**0.5
+
+        if self.metric == 'euclidean':
+            dx = (((self.X - X[:,None])**2).sum(axis=2))**0.5
+        elif self.metric == 'cityblock':
+            dx = (sp.absolute(self.X - X[:,None])).sum(axis=2)
+        else:
+            print "ERROR: metric not understood"
 
         if self.normalise == -1:
             natoms_db = (self.X != 0.).sum(1)
             natoms_t = (X != 0.).sum(1)
-            dx = dx / np.sqrt(natoms_db * natoms_t[:, None])
+            dx = dx / sp.sqrt(natoms_db * natoms_t[:, None])
 
         # Evaluate correlation
         k = kernel(dx, self.theta0, self.corr)
@@ -336,120 +343,120 @@ class GaussianProcess:
             return y
 
 
-    def fitKoK(self, X, y):
+#     def fitKoK(self, X, y):
         
-        # Business as usual, but now X is a list of matrices and y is a list of vectors:
-        # each element of X is the kernel matrix for a given \theta_i, each element of y is the regression coefficients vector for a given \theta_i 
+#         # Business as usual, but now X is a list of matrices and y is a list of vectors:
+#         # each element of X is the kernel matrix for a given \theta_i, each element of y is the regression coefficients vector for a given \theta_i 
 
-        # Force data to numpy.array
-        X = sp.asarray(X)
-        y = sp.asarray(y)
+#         # Force data to numpy.array
+#         X = sp.asarray(X)
+#         y = sp.asarray(y)
 
-        D = sp.zeros([len(X), len(X)])
-        for i, A in enumerate(X):
-            for j,B in enumerate(X[:i]):
-                D[i,j] = matrix_distance(A,B)
-                D[j,i] = D[i,j]
-        # D = sp.spatial.distance.squareform(D)
-        # Covariance matrix K
-        # sklearn correlation doesn't work. Probably correlation_models needs some different inputs 
-        K = kernel(D, self.theta0, correlation=self.corr) 
-        err = 'bb'
-        # Cholesky.CholeskyInverse(Cholesky.Cholesky(K + self.nugget * sp.eye(n_samples))) This method should work but doesn't
-        try:
-            inverse = LA.inv(K + self.nugget * sp.ones(n_samples))
-        except  LA.LinAlgError as err:
-            print "inv failed: %s. Switching to pinvh" % err
-            try:
-                inverse = LA.pinvh(K + self.nugget * sp.eye(n_samples))
-            except LA.LinAlgError as err:
-                print "pinvh failed: %s. Switching to pinvh" % err
-                try:
-                    inverse = LA.pinv2(K + self.nugget * sp.eye(n_samples))
-                except LA.LinAlgError as err:
-                    print "pinv2 failed: %s. Failed to invert matrix." % err
-                    inverse = None
+#         D = sp.zeros([len(X), len(X)])
+#         for i, A in enumerate(X):
+#             for j,B in enumerate(X[:i]):
+#                 D[i,j] = matrix_distance(A,B)
+#                 D[j,i] = D[i,j]
+#         # D = sp.spatial.distance.squareform(D)
+#         # Covariance matrix K
+#         # sklearn correlation doesn't work. Probably correlation_models needs some different inputs 
+#         K = kernel(D, self.theta0, correlation=self.corr) 
+#         err = 'bb'
+#         # Cholesky.CholeskyInverse(Cholesky.Cholesky(K + self.nugget * sp.eye(n_samples))) This method should work but doesn't
+#         try:
+#             inverse = LA.inv(K + self.nugget * sp.ones(n_samples))
+#         except  LA.LinAlgError as err:
+#             print "inv failed: %s. Switching to pinvh" % err
+#             try:
+#                 inverse = LA.pinvh(K + self.nugget * sp.eye(n_samples))
+#             except LA.LinAlgError as err:
+#                 print "pinvh failed: %s. Switching to pinvh" % err
+#                 try:
+#                     inverse = LA.pinv2(K + self.nugget * sp.eye(n_samples))
+#                 except LA.LinAlgError as err:
+#                     print "pinv2 failed: %s. Failed to invert matrix." % err
+#                     inverse = None
 
-        # alpha is the vector of regression coefficients of GaussianProcess
-        alpha = sp.dot(inverse, y)
+#         # alpha is the vector of regression coefficients of GaussianProcess
+#         alpha = sp.dot(inverse, y)
 
-        self.X = X
-        self.y = y
-        if not self.low_memory:
-            self.D = D
-            self.K = K
-        self.inverse = inverse
-        self.alpha = sp.array(alpha)
-        self.X_mean, self.X_std = 1.0, 0.0
-        self.y_mean, self.y_std = 1.0, 0.0
+#         self.X = X
+#         self.y = y
+#         if not self.low_memory:
+#             self.D = D
+#             self.K = K
+#         self.inverse = inverse
+#         self.alpha = sp.array(alpha)
+#         self.X_mean, self.X_std = 1.0, 0.0
+#         self.y_mean, self.y_std = 1.0, 0.0
 
 
 
-    def predict_KoK(self, X):
-        """
-        This function evaluates the Gaussian Process model at a set of points X.
+#     def predict_KoK(self, X):
+#         """
+#         This function evaluates the Gaussian Process model at a set of points X.
 
-        Parameters
+#         Parameters
 
-        X : array_like
-            An array with shape (n_eval, n_features) giving the point(s) at
-            which the prediction(s) should be made.
+#         X : array_like
+#             An array with shape (n_eval, n_features) giving the point(s) at
+#             which the prediction(s) should be made.
 
-        Returns
-        -------
-        y : array_like, shape (n_samples, ) or (n_samples, n_targets)
-            An array with shape (n_eval, ) if the Gaussian Process was trained
-            on an array of shape (n_samples, ) or an array with shape
-            (n_eval, n_targets) if the Gaussian Process was trained on an array
-            of shape (n_samples, n_targets) with the Best Linear Unbiased
-            Prediction at x.
-        """
+#         Returns
+#         -------
+#         y : array_like, shape (n_samples, ) or (n_samples, n_targets)
+#             An array with shape (n_eval, ) if the Gaussian Process was trained
+#             on an array of shape (n_samples, ) or an array with shape
+#             (n_eval, n_targets) if the Gaussian Process was trained on an array
+#             of shape (n_samples, n_targets) with the Best Linear Unbiased
+#             Prediction at x.
+#         """
         
-        # Check input shapes
-        X = array2d(X)
-        n_eval, _ = X.shape
-        n_samples, n_features = self.X.shape
-        n_samples_y, n_targets = self.y.shape
+#         # Check input shapes
+#         X = array2d(X)
+#         n_eval, _ = X.shape
+#         n_samples, n_features = self.X.shape
+#         n_samples_y, n_targets = self.y.shape
         
-        if X.shape[1] != n_features:
-            raise ValueError(("The number of features in X (X.shape[1] = %d) "
-                              "should match the number of features used "
-                              "for fit() "
-                              "which is %d.") % (X.shape[1], n_features))
+#         if X.shape[1] != n_features:
+#             raise ValueError(("The number of features in X (X.shape[1] = %d) "
+#                               "should match the number of features used "
+#                               "for fit() "
+#                               "which is %d.") % (X.shape[1], n_features))
 
-        X = (X - self.X_mean) / self.X_std
+#         X = (X - self.X_mean) / self.X_std
 
-        # Initialize output
-        y = sp.zeros(n_eval)
-        if eval_MSE:
-            MSE = sp.zeros(n_eval)
+#         # Initialize output
+#         y = sp.zeros(n_eval)
+#         if eval_MSE:
+#             MSE = sp.zeros(n_eval)
 
-        # Get distances between each new point in X and all input training set
-        # dx = sp.asarray([[ LA.norm(p-q) for q in self.X] for p in X]) # SLOW!!!
-        dx = (((self.X - X[:,None])**2).sum(axis=2))**0.5
-        # Evaluate correlation
-        k = kernel(dx, self.theta0, self.corr)
+#         # Get distances between each new point in X and all input training set
+#         # dx = sp.asarray([[ LA.norm(p-q) for q in self.X] for p in X]) # SLOW!!!
+#         dx = (((self.X - X[:,None])**2).sum(axis=2))**0.5
+#         # Evaluate correlation
+#         k = kernel(dx, self.theta0, self.corr)
 
-        # UNNECESSARY: feature relevance
-        if self.do_features_projection:
-            self.feat_proj = self.alpha.flatten() * k
-            y_scaled = self.feat_proj.sum(axis=1)
-        else:
-        # Scaled predictor
-            y_scaled = sp.dot(k, self.alpha)
-        # Predictor
-        y = (self.y_mean + self.y_std * y_scaled).reshape(n_eval, n_targets)
-        if self.y_ndim_ == 1:
-            y = y.ravel()
+#         # UNNECESSARY: feature relevance
+#         if self.do_features_projection:
+#             self.feat_proj = self.alpha.flatten() * k
+#             y_scaled = self.feat_proj.sum(axis=1)
+#         else:
+#         # Scaled predictor
+#             y_scaled = sp.dot(k, self.alpha)
+#         # Predictor
+#         y = (self.y_mean + self.y_std * y_scaled).reshape(n_eval, n_targets)
+#         if self.y_ndim_ == 1:
+#             y = y.ravel()
 
-        # Calculate mean square error of each prediction
-        if eval_MSE:
-            MSE = sp.dot(sp.dot(k, self.inverse), k.T)
-            if k.ndim > 1: MSE = sp.diagonal(MSE)
-            MSE = kernel(0.0, self.theta0, self.corr) + self.nugget - MSE
-            # Mean Squared Error might be slightly negative depending on
-            # machine precision: force to zero!
-            MSE[MSE < MACHINE_EPSILON] = 0.
-            if self.y_ndim_ == 1:
-                MSE = MSE.ravel()
-        return y, MSE
+#         # Calculate mean square error of each prediction
+#         if eval_MSE:
+#             MSE = sp.dot(sp.dot(k, self.inverse), k.T)
+#             if k.ndim > 1: MSE = sp.diagonal(MSE)
+#             MSE = kernel(0.0, self.theta0, self.corr) + self.nugget - MSE
+#             # Mean Squared Error might be slightly negative depending on
+#             # machine precision: force to zero!
+#             MSE[MSE < MACHINE_EPSILON] = 0.
+#             if self.y_ndim_ == 1:
+#                 MSE = MSE.ravel()
+#         return y, MSE
