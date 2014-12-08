@@ -55,13 +55,13 @@ def teach_database_plusone(GP, X, y, X_t, y_t):
 # --------------------------------------------
 split = 1
 N_models = 1
-theta0 = 1.0e1
+theta0 = 1.0e+2
 nugget = 1.0e-3
-normalise = 1
-metric = 'cityblock'
-Ntest = 20
+normalise = -1
+metric = 'euclidean'
+Ntest = 1
 Nteach = 2500
-Ndatabases = 25
+Ndatabases = 20
 
 # --------------------------------------------
 # Load all database
@@ -87,6 +87,9 @@ energy_error = []
 gp = GaussianProcess(corr='absolute_exponential', theta0=sp.asarray([theta0]),
                      nugget=nugget, verbose=True, normalise=normalise, do_features_projection=False, low_memory=False, metric=metric)
 
+
+test_indices = list(sp.random.randint(0, high=dataset['T'].size, size=Ntest))
+
 # --------------------------------------------
 # Loop over different training sets of the same size
 # --------------------------------------------    
@@ -94,7 +97,6 @@ for iteration in range(Ndatabases):
     # --------------------------------------------
     # Pick Ntest configurations randomly
     # --------------------------------------------
-    test_indices = list(sp.random.randint(0, high=dataset['T'].size, size=Ntest))
     db_indices = randint_norepeat(0, exclude=test_indices, high=dataset['T'].size, size=Nteach)
     teach_indices_rec.append(db_indices)
     
