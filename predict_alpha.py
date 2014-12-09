@@ -56,12 +56,12 @@ def teach_database_plusone(GP, X, y, X_t, y_t):
 split = 1
 N_models = 1
 theta0 = 1.0e1
-nugget = 1.0e-3
+nugget = 1.0e-15
 normalise = 1
 metric = 'cityblock'
 Ntest = 20
-Nteach = 2500
-Ndatabases = 25
+Nteach = 500
+Ndatabases = 21
 
 # --------------------------------------------
 # Load all database
