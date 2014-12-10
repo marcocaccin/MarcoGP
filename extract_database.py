@@ -48,27 +48,31 @@ X_all = []
 files = glob.glob("%s*.%s" % (basename, ext))
 for file in files:
     with open(file, 'r') as f:
+        natoms = int(f.readline())
+        # extract all properties in a list of floats
+        properties = [float(p) for i,p in enumerate(f.readline().split()) if i > 0]
+
+        # construct molecule from species x y z charge
+        molecule = []
         try:
-            natoms = int(f.readline())
-            # extract all properties in a list of floats
-            properties = [float(p) for i,p in enumerate(f.readline().split()) if i > 0]
-            # add all properties of current molecule to dataset
-            [dataset[k].append(properties[ordering[i]]) for i, k in enumerate(dataset.keys())]
-            # index is an integer
-            dataset['idx'][-1] = int(dataset['idx'][-1])
-            molecule = []
             for j in range(natoms):
                 molecule.append([float(x) for i, x in enumerate(f.readline().split()) if i > 0])
             molecule = sp.array(molecule, dtype='float64')
             pos = molecule[:,:-1]
             charge = molecule[:,-1]
+            # construct Coulomb matrix
             X = sp.outer(charge, charge) / (dist.squareform(dist.pdist(pos)) + sp.eye(natoms))
             sp.fill_diagonal(X, 0.5*sp.absolute(charge)**2.4)
+            # add all properties of current molecule to dataset
+            [dataset[k].append(properties[ordering[i]]) for i, k in enumerate(dataset.keys())]
+            dataset['idx'][-1] = int(dataset['idx'][-1]) # index is an integer
             X_all.append(X)
         except Exception as err:
             print "Molecule %s skipped, malformed file" % file
             print err
             pass
+
+
 dataset['X'] = X_all
 for k,w in dataset.iteritems():
     dataset[k] = sp.array(w)
