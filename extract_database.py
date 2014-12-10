@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-"""
+
+comment = """
 Properties in 2nd line of xyz file (-1 for python indexing):
 
 1	tag	-	gdb9 string to facilitate extraction
@@ -22,15 +23,26 @@ Properties in 2nd line of xyz file (-1 for python indexing):
 17	C_v	\frac{cal}{molK}	Heat capacity at 298.15 K
 """
 
-import glob, pickle
+import glob, pickle, sys
 import scipy as sp
 import scipy.spatial.distance as dist
 
 basename = "ds"
 ext = "xyz"
-dataset = {'idx':[], 'A':[], 'B':[], 'C':[], 'mu':[], 'alpha':[],
-		   'e_homo':[], 'e_lumo':[], 'e_gap':[], 'rsquare':[],
-		   'zpve':[], 'U_0':[], 'U':[], 'H':[], 'G':[], 'C_v':[]}
+
+keywords = ['idx', 'A', 'B', 'C', 'mu', 'alpha',
+		   'e_homo', 'e_lumo', 'e_gap', 'rsquare',
+		   'zpve', 'U_0', 'U', 'H', 'G', 'C_v']
+# make a Dictionary with empty lists as words
+dataset = {}
+for k in keywords:
+    dataset[k] = []
+ordering = []
+# find in which order the keywords entered in the Dictionary
+for k in dataset.keys():
+    ordering.append(sp.where(k == sp.asarray(keywords))[0][0])
+
+    
 X_all = []
 
 files = glob.glob("%s*.%s" % (basename, ext))
@@ -41,7 +53,7 @@ for file in files:
             # extract all properties in a list of floats
             properties = [float(p) for i,p in enumerate(f.readline().split()) if i > 0]
             # add all properties of current molecule to dataset
-            [dataset[k].append(properties[i]) for i, k in enumerate(dataset.keys())]
+            [dataset[k].append(properties[ordering[i]]) for i, k in enumerate(dataset.keys())]
             # index is an integer
             dataset['idx'][-1] = int(dataset['idx'][-1])
             molecule = []
@@ -58,7 +70,11 @@ for file in files:
             print err
             pass
 dataset['X'] = X_all
+for k,w in dataset.iteritems():
+    dataset[k] = sp.array(w)
 
+dataset['description'] = comment # add (sort of) header to the dataset
 f = open('%s_db.pkl' % basename, 'w')
 pickle.dump(dataset, f)
 f.close()
+

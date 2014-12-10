@@ -4,3 +4,6 @@
 *.txt
 
 qm7.pkl
+
+
+.#extract_database.py
