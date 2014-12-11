@@ -27,16 +27,19 @@ def randint_norepeat(low, exclude=None, high=None, size=None):
 
 
 def teach_database_plusone(GP, X, y, X_t, y_t):
+    # Force all data to be numpy arrays
+    X, y = sp.asarray(X), sp.asarray(y)
+    X_t, y_t = sp.asarray(X_t), sp.asarray(y_t)
     # From a fixed database (X,y), get alpha of some new configurations if added one at a time
-    if type(y_t) is float:
-        X_t = [X_t]
-        y_t = [y_t]
     alphas = []
     for i, (X_test, y_test) in enumerate(zip(X_t, y_t)):
-        X_plus = X_test + X # add element to the lists
-        y_plus = y_test + y
+        if y_test.size != 1:
+            print "ERROR: output space must be 1D. Exiting..."
+            return
+        # Test configuration is placed at position 0
+        X_plus = sp.row_stack((X_test, X))
+        y_plus = sp.append(y_test, y)
         ttt = time.clock()
-
         GP.fit(X_plus, y_plus)
         print "TIMER teach", time.clock() - ttt
         alphas.append((gp.alpha[0]).flatten().copy())
@@ -63,12 +66,15 @@ Ntest = 20
 Nteach = 500
 Ndatabases = 21
 
+target_property = 'T'
+database_file = 'qm7.pkl'
+
 # --------------------------------------------
 # Load all database
 # --------------------------------------------
 ttt = time.clock()
-if not os.path.exists('qm7.pkl'): os.system('wget http://www.quantum-machine.org/data/qm7.pkl')
-dataset = pickle.load(open('qm7.pkl','r'))
+if not os.path.exists(database_file): os.system('wget http://www.quantum-machine.org/data/qm7.pkl')
+dataset = pickle.load(open(database_file,'r'))
 
 print "TIMER load_data", time.clock() - ttt
 
@@ -94,12 +100,12 @@ for iteration in range(Ndatabases):
     # --------------------------------------------
     # Pick Ntest configurations randomly
     # --------------------------------------------
-    test_indices = list(sp.random.randint(0, high=dataset['T'].size, size=Ntest))
-    db_indices = randint_norepeat(0, exclude=test_indices, high=dataset['T'].size, size=Nteach)
+    test_indices = list(sp.random.randint(0, high=dataset[target_property].size, size=Ntest))
+    db_indices = randint_norepeat(0, exclude=test_indices, high=dataset[target_property].size, size=Nteach)
     teach_indices_rec.append(db_indices)
     
     X = dataset['X'][test_indices + db_indices]
-    T = dataset['T'][test_indices + db_indices]
+    T = dataset[target_property][test_indices + db_indices]
     print "\n", "-"*60, "\n"
     print "db size = %d, iteration %03d" % (Nteach, iteration)
     # --------------------------------------------
