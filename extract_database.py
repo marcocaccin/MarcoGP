@@ -23,12 +23,13 @@ Properties in 2nd line of xyz file (-1 for python indexing):
 17	C_v	\frac{cal}{molK}	Heat capacity at 298.15 K
 """
 
-import glob, pickle, sys
+import glob, pickle, sys, os
 import scipy as sp
 import scipy.spatial.distance as dist
 
-basename = "ds"
+basename = sys.argv[1]
 ext = "xyz"
+cwd = os.getcwd()
 
 keywords = ['idx', 'A', 'B', 'C', 'mu', 'alpha',
 		   'e_homo', 'e_lumo', 'e_gap', 'rsquare',
@@ -45,7 +46,7 @@ for k in dataset.keys():
     
 X_all = []
 
-files = glob.glob("%s*.%s" % (basename, ext))
+files = glob.glob(os.path.join(cwd, "%s*.%s" % (basename, ext)))
 for file in files:
     with open(file, 'r') as f:
         natoms = int(f.readline())
@@ -78,7 +79,7 @@ for k,w in dataset.iteritems():
     dataset[k] = sp.array(w)
 
 dataset['description'] = comment # add (sort of) header to the dataset
-f = open('%s_db.pkl' % basename, 'w')
+f = open(os.path.join(cwd, '%s_db.pkl' % basename), 'w')
 pickle.dump(dataset, f)
 f.close()
 
