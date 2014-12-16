@@ -27,6 +27,17 @@ import glob, pickle, sys, os
 import scipy as sp
 import scipy.spatial.distance as dist
 
+
+def species_to_nuc_charge(species):
+    
+    conversion = {'H':1, 'B':5, 'C':6, 'N':7, 'O':8, 'F':9, 'P':15, 'S':16, 'Cl':17}
+    charge = []
+    for s in species:
+        charge.append(conversion[s])
+    return sp.array(charge)
+
+
+
 basename = sys.argv[1]
 ext = "xyz"
 cwd = os.getcwd()
@@ -45,6 +56,7 @@ for k in dataset.keys():
 
     
 X_all = []
+charge = []
 
 files = glob.glob(os.path.join(cwd, "%s*.%s" % (basename, ext)))
 for file in files:
@@ -57,24 +69,29 @@ for file in files:
         molecule = []
         try:
             for j in range(natoms):
-                molecule.append([float(x) for i, x in enumerate(f.readline().split()) if i > 0])
-            molecule = sp.array(molecule, dtype='float64')
+                # molecule.append([float(x) for i, x in enumerate(f.readline().split()) if i > 0])
+                molecule.append([x for i, x in enumerate(f.readline().split())])
+            molecule = sp.array(molecule)
+            nuc_charge = species_to_nuc_charge(molecule[:,0])
+            molecule = sp.array(molecule[:,1:], dtype='float64')
             pos = molecule[:,:-1]
-            charge = molecule[:,-1]
             # construct Coulomb matrix
-            X = sp.outer(charge, charge) / (dist.squareform(dist.pdist(pos)) + sp.eye(natoms))
-            sp.fill_diagonal(X, 0.5*sp.absolute(charge)**2.4)
+            X = sp.outer(nuc_charge, nuc_charge) / (dist.squareform(dist.pdist(pos)) + sp.eye(natoms))
+            sp.fill_diagonal(X, 0.5*sp.absolute(nuc_charge)**2.4)
             # add all properties of current molecule to dataset
             [dataset[k].append(properties[ordering[i]]) for i, k in enumerate(dataset.keys())]
             dataset['idx'][-1] = int(dataset['idx'][-1]) # index is an integer
+
             X_all.append(X)
+            charge.append(molecule[:,-1])
         except Exception as err:
             print "Molecule %s skipped, malformed file" % file
             print err
             pass
 
-
+        
 dataset['X'] = X_all
+dataset['charge'] = charge
 for k,w in dataset.iteritems():
     dataset[k] = sp.array(w)
 
