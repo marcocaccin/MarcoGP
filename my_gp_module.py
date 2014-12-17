@@ -112,6 +112,15 @@ class GaussianProcess:
         self.y_mean, self.y_std = None, None
 
 
+    def a2b_distance(self, X_a, X_b, return_k=False):
+        X_a, X_b = sp.asarray(X_a), sp.asarray(X_b)
+        d = sp.spatial.distance.cdist(X_a, X_b, metric=self.metric)
+        if return_k:
+            return d, kernel(d, self.theta0, correlation=self.corr)
+        else:
+            return d
+        
+        
     def calc_kernel_matrix(self, X):
         """
         The Gaussian Process model fitting method.
