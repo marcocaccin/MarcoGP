@@ -100,6 +100,7 @@ class GaussianProcess:
         self.do_features_projection = do_features_projection
         self.metric = metric
 
+        
     def flush_data(self):
         self.X = None
         self.y = None
@@ -112,9 +113,14 @@ class GaussianProcess:
         self.y_mean, self.y_std = None, None
 
 
-    def a2b_distance(self, X_a, X_b, return_k=False):
-        X_a, X_b = sp.asarray(X_a), sp.asarray(X_b)
-        d = sp.spatial.distance.cdist(X_a, X_b, metric=self.metric)
+    def a2b_distance(self, Xa, Xb, return_k=False):
+        """
+        Given two sets of samples Xa and Xb, return the distance between
+        each element of Xa and Xb. If required, calculate the kernel of such distances
+        according to the GP model in use.
+        """
+        Xa, Xb = sp.asarray(Xa), sp.asarray(Xb)
+        d = sp.spatial.distance.cdist(Xa, Xb, metric=self.metric)
         if return_k:
             return d, kernel(d, self.theta0, correlation=self.corr)
         else:
@@ -123,7 +129,7 @@ class GaussianProcess:
         
     def calc_kernel_matrix(self, X):
         """
-        The Gaussian Process model fitting method.
+        Perform only the calculation of the covariance matrix given the GP and a dataset
 
         Parameters
         ----------
@@ -131,15 +137,9 @@ class GaussianProcess:
             An array with shape (n_samples, n_features) with the input at which
             observations were made.
 
-        y : double array_like
-            An array with shape (n_samples, ) or shape (n_samples, n_targets)
-            with the observations of the output to be predicted.
-
         Returns
         -------
-        gp : self
-            A fitted Gaussian Process model object awaiting data to perform
-            predictions.
+        gp : adds properties self.D and self.K
         """
         
         # Force data to 2D numpy.array
@@ -263,11 +263,10 @@ class GaussianProcess:
             Default assumes evalMSE = False and evaluates only the BLUP (mean
             prediction).
 
-        batch_size : integer, optional
-            An integer giving the maximum number of points that can be
-            evaluated simultaneously (depending on the available memory).
-            Default is None so that all given points are evaluated at the same
-            time.
+        return_k : boolean, optional
+            A boolean specifying whether the function should return the kernel
+            vector (kernel of distances between test configurations and database ones).
+            Default is False.
 
         Returns
         -------
@@ -281,6 +280,10 @@ class GaussianProcess:
         MSE : array_like, optional (if eval_MSE == True)
             An array with shape (n_eval, ) or (n_eval, n_targets) as with y,
             with the Mean Squared Error at x.
+
+        k : array_like, optional (if return_k == True)
+            An array with shape (n_eval, ) or (n_eval, n_targets) as with y
+            
         """
         
         # Check input shapes
@@ -351,6 +354,45 @@ class GaussianProcess:
         else:
             return y
 
+
+    def teach_database_plusone(self, X, y, X_t, y_t):
+        """
+        Gaussian Process model fitting, target is to get the correct regression coefficients
+        for each of the configurations (X_i, y_i) i \ in t if configuration i were included in the teaching.
+
+        Parameters
+        ----------
+        X, X_t : double array_like
+            An array with shape (n_samples, n_features) with the input at which
+            observations were made.
+
+        y, y_t : double array_like
+            An array with shape (n_samples, ) or shape (n_samples, n_targets)
+            with the observations of the output to be predicted.
+
+        Returns
+        -------
+        alpha: an array of regression coefficients with shape (n_samples, ).
+        """
+        self.flush_data()
+        # Force all data to be numpy arrays
+        X, y = sp.asarray(X), sp.asarray(y)
+        X_t, y_t = sp.asarray(X_t), sp.asarray(y_t)
+        # From a fixed database (X,y), get alpha of some new configurations if added one at a time
+        alphas = []
+        for i, (X_test, y_test) in enumerate(zip(X_t, y_t)):
+            if y_test.size != 1:
+                print "ERROR: output space must be 1D. Exiting..."
+                return
+            # Test configuration is placed at position 0
+            X_plus = sp.row_stack((X_test, X))
+            y_plus = sp.append(y_test, y)
+            self.fit(X_plus, y_plus)
+            alphas.append((self.alpha[0]).flatten().copy())
+            self.flush_data()
+        return sp.array(alphas).flatten()                                                                                                                    
+
+        
 
 #     def fitKoK(self, X, y):
         
