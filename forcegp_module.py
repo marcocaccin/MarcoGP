@@ -3,8 +3,9 @@ Gaussian process regression module. Inspired by sklearn.gaussian_process module 
 """
 # Author: Marco Caccin <marco DOT caccin AT gmail DOT com>
 #
-# License: Open Software License
-from __future__ import print_function
+# License: Apache License
+
+from __future__ import print_function, division
 
 from scipy import linalg as LA
 import scipy as sp
@@ -218,10 +219,10 @@ class GaussianProcess:
             EIGs.append(eigs)
         # rescale eigenvalues descriptor
         if self.normalise_scalar:
-            eig_means = [e[e.nonzero()[0], e.nonzero()[1]].mean() for e in EIGs]
-            eig_stds = [e[e.nonzero()[0], e.nonzero()[1]].std() for e in EIGs]
+            eig_means = sp.array([e[e.nonzero()[0], e.nonzero()[1]].mean() for e in EIGs])
+            eig_stds = sp.array([e[e.nonzero()[0], e.nonzero()[1]].std() for e in EIGs])
             eig_stds[eig_stds == 0.] = 1. 
-            EIGs = [(e - eig_means[i]) / eig_stds[i] for i,e in enumerate(EIGs)]
+            EIGs = [(e - mean) / std for e, mean, std in zip(EIGs, eig_means, eig_stds)]
         # rescale internal vector to have average length = 1
         if self.normalise_ivs:
             # iv_stds = [e[e.nonzero()[0], e.nonzero()[1]].std() for e in IVs]
@@ -229,10 +230,13 @@ class GaussianProcess:
             iv_means = [sp.array([LA.norm(vector) for vector in e]).mean() for e in IVs]
             IVs = [iv / mean for iv, mean in zip(IVs, iv_means)]
 
+        # output cleanup: add machine epsilon if force is exactly zero
+        Y = sp.asarray(Y)
+        Y[sp.array(map(LA.norm, Y)) <= MACHINE_EPSILON] = 10 * MACHINE_EPSILON * sp.ones(3)
+            
         # correlations wrt actual forces
         IV_corr = sp.array([sp.diagonal(spdist.cdist(Y, iv, metric='correlation')).mean() for iv in IVs])
 
-        Y = sp.asarray(Y)
 	if return_features:
 	    return IVs, EIGs, Y, IV_corr
 	else:
@@ -378,6 +382,7 @@ class GaussianProcess:
 
         if not self.low_memory:
             self.inverse = inv
+            self.Kglob = Kglob
         self.alpha = sp.array(alpha)
         
 
