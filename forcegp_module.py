@@ -16,6 +16,44 @@ from quippy import *
 MACHINE_EPSILON = sp.finfo(sp.double).eps    
 
 
+
+def rotmat_from_u2v(u,v):
+    """
+    Return the rotation matrix associated with rotation of vector u onto vector v. Euler-Rodrigues formula.
+    """
+    u, v = u / LA.norm(u), v / LA.norm(v)
+    axis = sp.cross(u,v)
+    theta = sp.arcsin(LA.norm(axis))
+    axis = axis/LA.norm(axis) # math.sqrt(np.dot(axis, axis))
+    a = sp.cos(theta/2)
+    b, c, d = -axis * sp.sin(theta/2)
+    aa, bb, cc, dd = a*a, b*b, c*c, d*d
+    bc, ad, ac, ab, bd, cd = b*c, a*d, a*c, a*b, b*d, c*d
+    return np.array([[aa+bb-cc-dd, 2*(bc+ad), 2*(bd-ac)],
+                     [2*(bc-ad), aa+cc-bb-dd, 2*(cd+ab)],
+                     [2*(bd+ac), 2*(cd-ab), aa+dd-bb-cc]])
+
+def rotmat_multi(us, vs):
+    """
+    Return the matrix of rotation matrices associated with rotation of vector u onto vector v
+    for all u in us and v in vs
+    """
+    us, vs = sp.asarray(us), sp.asarray(vs)
+    nu, nv = us.shape[0], vs.shape[0]
+    mat = sp.zeros((nu, nv, 3, 3))
+    for i, u in enumerate(us):
+        for j, v in enumerate(vs):
+            if j > i:
+                R = rotmat_from_u2v(u,v)
+                mat[i,j] = R 
+                mat[i,j] = R.T
+            elif j == i:
+                mat[i,j] = sp.eye(3)
+            else:
+                continue 
+    return mat
+    
+    
 def internal_vector(atoms, at_idx, exponent, r_cut, do_calc_connect=True):
     iv = sp.zeros(3)
     if do_calc_connect:
@@ -238,15 +276,16 @@ class GaussianProcess:
         IV_corr = sp.array([sp.diagonal(spdist.cdist(Y, iv, metric='correlation')).mean() for iv in IVs])
 
 	if return_features:
-	    return IVs, EIGs, Y, IV_corr
+	    return IVs, EIGs, Y, IV_corr, iv_means
 	else:
 	    self.ivs = IVs
 	    self.eigs = EIGs
 	    self.y = Y
 	    self.iv_corr = IV_corr
+        self.iv_means = iv_means
 
 
-    def testatoms_get_features(self, atomslist):
+    def testatoms_get_features(self, atomslist, iv_means=None):
         """
         type(atomslist) == quippy.io.AtomsList
         """
@@ -254,6 +293,9 @@ class GaussianProcess:
         EIGs = []
         exps, r_cuts = self.iv_params[0], self.iv_params[1]
 
+        if not iv_means:
+            iv_means = self.iv_means
+            
         # each iv is an independent information channel
         for feature, (r_cut, exp) in enumerate(zip(r_cuts, exps)):
             print("Evaluating test set feature %d of %d..." % (feature+1, exps.size))
@@ -277,9 +319,7 @@ class GaussianProcess:
             EIGs = [(e - eig_means[i]) / eig_stds[i] for i,e in enumerate(EIGs)]
         # rescale internal vector to have average length = 1
         if self.normalise_ivs:
-            iv_stds = [e[e.nonzero()[0], e.nonzero()[1]].std() for e in IVs]
-            iv_stds[iv_stds == 0.] = 1.
-            IVs = [iv / std for iv, std in zip(IVs, iv_stds)]
+            IVs = [iv / mean for iv, mean in zip(IVs, iv_means)]
 	    return IVs, EIGs
 
     
@@ -319,7 +359,7 @@ class GaussianProcess:
         self.X = X
         return K
 
-    
+
     def fit(self, X=None, y=None):
         """
         The Gaussian Process model fitting method.
@@ -353,6 +393,126 @@ class GaussianProcess:
         # outer_iv = [sp.outer(iv, iv.T) for iv in self.ivs] # NO, wrong
         for K, ivs, iv_corr in zip(K_list, self.ivs, self.iv_corr):
             # make the outer product tensor of shape (N_ls, N_ls, 3, 3) and multiply it with the scalar kernel
+            K3D = iv_corr * K[:, :, None, None] * rotmat_multi(ivs, ivs)
+            # reshape tensor onto a 2D array tiled with 3x3 matrix blocks
+            if Kglob is None:
+                Kglob = K3D
+            else:
+                Kglob += K3D
+        Kglob = my_tensor_reshape(Kglob)
+        # # all channels merged into one covariance matrix
+        # # K^{glob}_{ij} = \sum_{k = 1}^{N_{IVs}} w_k D_{k, ij} |v_k^i\rangle \langle v_k^j | 
+        
+        try:
+            inv = LA.pinv2(Kglob)
+        except LA.LinAlgError as err:
+            print("pinv2 failed: %s. Switching to pinvh" % err)
+            try:
+                inv = LA.pinvh(Kglob)
+            except LA.LinAlgError as err:
+                print("pinvh failed: %s. Switching to pinv2" % err)
+                inv = None
+                
+        # alpha is the vector of regression coefficients of GaussianProcess
+        alpha = sp.dot(inv, self.y.ravel())
+
+        if not self.low_memory:
+            self.inverse = inv
+            self.Kglob = Kglob
+        self.alpha = sp.array(alpha)
+        
+
+    def predict(self, atomslist=None, eigs_t=None, ivs_t=None):
+        """
+        This function evaluates the Gaussian Process model at x.
+
+        Parameters
+
+        atomslist : list of Atoms or AtomsList
+            An list giving the atomic configurations at
+            which the prediction(s) should be made.
+
+        Returns
+        -------
+        y : array_like, shape (n_samples, 3)
+            An array with shape (n_eval, 3) for a Gaussian Process trained on an array
+            of shape (n_samples, 3) with the Best Linear Unbiased Prediction at x.
+        """
+        
+        if atomslist is not None:
+            ivs_t, eigs_t = self.testatoms_get_features(atomslist)
+        elif (eigs_t is None or ivs_t is None):
+            return None
+        
+        # Check input shapes
+        n_eval, _ = ivs_t[0].shape
+        n_samples_y, _ = self.y.shape
+        n_features = len(ivs_t)
+
+        # Get scalar distances between each new point in X and all input training set
+        if self.metric == 'euclidean':
+            dx = [(((eig_db - eig_t[:,None])**2).sum(axis=2))**0.5 for eig_db, eig_t in zip(self.eigs, eigs_t)]
+        elif self.metric == 'cityblock':
+            dx = [(sp.absolute(self.X - X[:,None])).sum(axis=2) for eig_db, eig_t in zip(self.eigs, eigs_t)]
+        else:
+            print("ERROR: metric not understood")
+
+        # Evaluate scalar correlation
+        klist = [scalar_kernel(d, self.theta0) for d in dx]
+
+        # join vectorial features and scalar correlation together
+        kglob = None
+        # outer_iv = [sp.outer(iv, iv.T) for iv in self.ivs] # NO, wrong
+        for k, iv_t, iv_db, iv_corr in zip(klist, ivs_t, self.ivs, self.iv_corr):
+            # make the outer product tensor of shape (N_ls, N_ls, 3, 3) and multiply it with the scalar kernel
+            k3D = iv_corr * k[:, :, None, None] * rotmat_multi(iv_t, iv_db)
+            if kglob is None:
+                kglob = k3D
+            else:
+                kglob += k3D
+
+        # reshape tensor onto a 2D array tiled with 3x3 matrix blocks
+        k3D = my_tensor_reshape(kglob)
+        
+        # Predictor
+        return sp.dot(k3D, self.alpha).reshape(n_eval,3)
+
+
+    ####################################################################################################
+
+    
+    def fit_sollich(self, X=None, y=None):
+        """
+        The Gaussian Process model fitting method.
+
+        Parameters
+        ----------
+        X : double array_like
+            An array with shape (n_samples, n_features) with the input at which
+            observations were made.
+
+        y : array_like, shape (n_samples, 3)
+            An array with shape (n_eval, 3) with the observations of the output to be predicted.
+            of shape (n_samples, 3) with the Best Linear Unbiased Prediction at x.
+
+        Returns
+        -------
+        gp : self
+            A fitted Gaussian Process model object awaiting data to perform
+            predictions.
+        """
+           
+        if X:
+            K_list = self.calc_scalar_kernel_matrices(X)
+        else:
+            K_list = self.calc_scalar_kernel_matrices()
+
+        # add diagonal noise to each scalar kernel matrix
+        K_list = [K + self.nugget * sp.ones(K.shape[0]) for K in K_list]
+
+        Kglob = None
+        for K, ivs, iv_corr in zip(K_list, self.ivs, self.iv_corr):
+            # make the outer product tensor of shape (N_ls, N_ls, 3, 3) and multiply it with the scalar kernel
             K3D = iv_corr * K[:, :, None, None] * outer_product_multi(ivs, ivs)
             # reshape tensor onto a 2D array tiled with 3x3 matrix blocks
             if Kglob is None:
@@ -364,19 +524,15 @@ class GaussianProcess:
         # # K^{glob}_{ij} = \sum_{k = 1}^{N_{IVs}} w_k D_{k, ij} |v_k^i\rangle \langle v_k^j | 
         
         try:
-            inv = LA.inv(Kglob)
+            inv = LA.pinv2(Kglob)
         except LA.LinAlgError as err:
-            print("inv failed: %s. Switching to pinvh" % err)
+            print("pinv2 failed: %s. Switching to pinvh" % err)
             try:
                 inv = LA.pinvh(Kglob)
             except LA.LinAlgError as err:
                 print("pinvh failed: %s. Switching to pinv2" % err)
-                try:
-                    inv = LA.pinv2(Kglob)
-                except LA.LinAlgError as err:
-                    print("pinv2 failed: %s. Failed to invert matrix." % err)
-                    inv = None
-
+                inv = None
+                
         # alpha is the vector of regression coefficients of GaussianProcess
         alpha = sp.dot(inv, self.y.ravel())
 
@@ -386,7 +542,7 @@ class GaussianProcess:
         self.alpha = sp.array(alpha)
         
 
-    def predict(self, atomslist=None, eigs_t=None, ivs_t=None):
+    def predict_sollich(self, atomslist=None, eigs_t=None, ivs_t=None):
         """
         This function evaluates the Gaussian Process model at x.
 
@@ -440,4 +596,3 @@ class GaussianProcess:
         
         # Predictor
         return sp.dot(k3D, self.alpha).reshape(n_eval,3)
-
