@@ -283,9 +283,10 @@ class GaussianProcess:
 	    self.y = Y
 	    self.iv_corr = IV_corr
         self.iv_means = iv_means
+        self.eig_means, self.eig_stds = eig_means, eig_stds
 
 
-    def testatoms_get_features(self, atomslist, iv_means=None):
+    def testatoms_get_features(self, atomslist, iv_means=None, eig_means=None, eig_stds=None):
         """
         type(atomslist) == quippy.io.AtomsList
         """
@@ -295,6 +296,8 @@ class GaussianProcess:
 
         if not iv_means:
             iv_means = self.iv_means
+        if not (eig_means, eig_stds:
+            eig_means, eig_stds = self.eig_means, self.eig_stds
             
         # each iv is an independent information channel
         for feature, (r_cut, exp) in enumerate(zip(r_cuts, exps)):
@@ -313,9 +316,6 @@ class GaussianProcess:
             EIGs.append(eigs)
         # rescale eigenvalues descriptor
         if self.normalise_scalar:
-            eig_means = [e[e.nonzero()[0], e.nonzero()[1]].mean() for e in EIGs]
-            eig_stds = [e[e.nonzero()[0], e.nonzero()[1]].std() for e in EIGs]
-            eig_stds[eig_stds == 0.] = 1. 
             EIGs = [(e - eig_means[i]) / eig_stds[i] for i,e in enumerate(EIGs)]
         # rescale internal vector to have average length = 1
         if self.normalise_ivs:
