@@ -11,9 +11,10 @@ from scipy import linalg as LA
 import scipy as sp
 import numpy as np
 import scipy.spatial.distance as spdist
-from sklearn.utils import array2d
 from quippy import *
-MACHINE_EPSILON = sp.finfo(sp.double).eps    
+from matscipy.neighbours import neighbour_list
+
+MACHINE_EPSILON = sp.finfo(sp.double).eps
 
 
 
@@ -45,22 +46,24 @@ def rotmat_multi(us, vs):
         for j, v in enumerate(vs):
             if j > i:
                 R = rotmat_from_u2v(u,v)
-                mat[i,j] = R 
+                mat[i,j] = R
                 mat[i,j] = R.T
             elif j == i:
                 mat[i,j] = sp.eye(3)
             else:
-                continue 
+                continue
     return mat
-    
-    
+
+
 def internal_vector(atoms, at_idx, exponent, r_cut, do_calc_connect=True):
     iv = sp.zeros(3)
-    if do_calc_connect:
-        atoms.set_cutoff(8.0)
-        atoms.calc_connect()
-    # each copy of each atom within the cutoff radius contribute to iv
-    r = np.asarray([neighbours.diff for neighbours in atoms.neighbours[at_idx]])
+    atom, r = neighbour_list("iD", atoms, 8.0)
+    r = np.asarray(r)[atom == at_idx]
+    # if do_calc_connect:
+    #     atoms.set_cutoff(8.0)
+    #     atoms.calc_connect()
+    # # each copy of each atom within the cutoff radius contribute to iv
+    # r = np.asarray([neighbours.diff for neighbours in atoms.neighbours[at_idx]])
     r_mag = np.asarray(map(LA.norm, r))
     return (r / r_mag[:,None] * sp.exp(- (r_mag / r_cut) ** exponent)[:,None]).sum(axis=0)
 
@@ -92,7 +95,7 @@ def iv_default_params():
     """
     cutoff radius, exponent, sigma of internal vectors, as of PRL.
     """
-    
+
     v = sp.array([
         [ 0.5000000000000000 , 1.0000000000000000,  0.5336331762080207 ],
         [ 1.4375000000000000 , 1.8750000000000000,  4.5908332134557153 ],
@@ -117,7 +120,7 @@ def iv_default_params():
         [ 4.2500000000000000 , 7.1250000000000000,  61.103256188283005 ],
         [ 5.1875000000000000 , 7.1250000000000000,  55.286697365645992 ]])
     return v
-    
+
 
 def coulomb_mat_eigvals(atoms, at_idx, r_cut, do_calc_connect=True, n_eigs=20):
 
@@ -129,7 +132,7 @@ def coulomb_mat_eigvals(atoms, at_idx, r_cut, do_calc_connect=True, n_eigs=20):
 
     M = sp.outer(Z, Z) / (sp.spatial.distance_matrix(pos, pos) + np.eye(pos.shape[0]))
     sp.fill_diagonal(M, 0.5 * Z ** 2.4)
-    
+
     # data = [[atoms.z[a.j], sp.asarray(a.diff)] for a in atoms.neighbours[at_idx]]
     # data.append([atoms.z[at_idx], sp.array([0,0,0])]) # central atom
     # M = sp.zeros((len(data), len(data)))
@@ -145,7 +148,7 @@ def coulomb_mat_eigvals(atoms, at_idx, r_cut, do_calc_connect=True, n_eigs=20):
     elif eigs.size >= n_eigs:
         return eigs[:n_eigs] # only first few eigenvectors
     else:
-        return sp.hstack((eigs, sp.zeros(n_eigs - eigs.size))) # zero-padded extra fields     
+        return sp.hstack((eigs, sp.zeros(n_eigs - eigs.size))) # zero-padded extra fields
 
 
 def scalar_kernel(d, theta, correlation='squared_exponential'):
@@ -167,11 +170,11 @@ class GaussianProcess:
         Built-in correlation models are::
             'absolute_exponential', 'squared_exponential',
             NOT YET 'generalized_exponential', 'cubic', 'linear'
-            
+
     verbose : boolean, optional
         A boolean specifying the verbose level.
         Default is verbose = False.
-        
+
     theta0 : double array_like, optional
         An array with shape (n_features, ) or (1, ).
         The parameters in the autocorrelation model.
@@ -215,7 +218,7 @@ class GaussianProcess:
         self.n_eigs = n_eigs
         self.iv_params = iv_params
 
-        
+
     def flush_data(self):
         self.ivs = None
         self.eigs = None
@@ -238,7 +241,7 @@ class GaussianProcess:
         EIGs = []
         Y = []
         exps, r_cuts = self.iv_params[0], self.iv_params[1]
-        
+
         # each iv is an independent information channel
         for feature, (r_cut, exp) in enumerate(zip(r_cuts, exps)):
             print("Evaluating database feature %d of %d..." % (feature+1, exps.size))
@@ -259,7 +262,7 @@ class GaussianProcess:
         if self.normalise_scalar:
             eig_means = sp.array([e[e.nonzero()[0], e.nonzero()[1]].mean() for e in EIGs])
             eig_stds = sp.array([e[e.nonzero()[0], e.nonzero()[1]].std() for e in EIGs])
-            eig_stds[eig_stds == 0.] = 1. 
+            eig_stds[eig_stds == 0.] = 1.
             EIGs = [(e - mean) / std for e, mean, std in zip(EIGs, eig_means, eig_stds)]
         # rescale internal vector to have average length = 1
         if self.normalise_ivs:
@@ -271,12 +274,12 @@ class GaussianProcess:
         # output cleanup: add machine epsilon if force is exactly zero
         Y = sp.asarray(Y)
         Y[sp.array(map(LA.norm, Y)) <= MACHINE_EPSILON] = 10 * MACHINE_EPSILON * sp.ones(3)
-            
+
         # correlations wrt actual forces
         IV_corr = sp.array([sp.diagonal(spdist.cdist(Y, iv, metric='correlation')).mean() for iv in IVs])
 
 	if return_features:
-	    return IVs, EIGs, Y, IV_corr, iv_means
+	    return IVs, EIGs, Y, IV_corr, iv_means, eig_means, eig_stds
 	else:
 	    self.ivs = IVs
 	    self.eigs = EIGs
@@ -296,9 +299,9 @@ class GaussianProcess:
 
         if not iv_means:
             iv_means = self.iv_means
-        if not (eig_means, eig_stds:
+        if not (eig_means or eig_stds):
             eig_means, eig_stds = self.eig_means, self.eig_stds
-            
+
         # each iv is an independent information channel
         for feature, (r_cut, exp) in enumerate(zip(r_cuts, exps)):
             print("Evaluating test set feature %d of %d..." % (feature+1, exps.size))
@@ -322,7 +325,7 @@ class GaussianProcess:
             IVs = [iv / mean for iv, mean in zip(IVs, iv_means)]
 	    return IVs, EIGs
 
-    
+
     def calc_scalar_kernel_matrices(self, X=None):
         """
         Perform only the calculation of the covariance matrix given the GP and a dataset
@@ -348,10 +351,10 @@ class GaussianProcess:
             self.D.append(spdist.squareform(D))
 
         # Covariance matrix K. One per channel
-        # sklearn correlation doesn't work. Probably correlation_models needs some different inputs 
+        # sklearn correlation doesn't work. Probably correlation_models needs some different inputs
         K = []
         for D in self.D:
-            K.append(scalar_kernel(D, self.theta0, correlation=self.corr)) 
+            K.append(scalar_kernel(D, self.theta0, correlation=self.corr))
         if self.low_memory:
             self.D = None
         else:
@@ -380,7 +383,7 @@ class GaussianProcess:
             A fitted Gaussian Process model object awaiting data to perform
             predictions.
         """
-           
+
         if X:
             K_list = self.calc_scalar_kernel_matrices(X)
         else:
@@ -401,8 +404,8 @@ class GaussianProcess:
                 Kglob += K3D
         Kglob = my_tensor_reshape(Kglob)
         # # all channels merged into one covariance matrix
-        # # K^{glob}_{ij} = \sum_{k = 1}^{N_{IVs}} w_k D_{k, ij} |v_k^i\rangle \langle v_k^j | 
-        
+        # # K^{glob}_{ij} = \sum_{k = 1}^{N_{IVs}} w_k D_{k, ij} |v_k^i\rangle \langle v_k^j |
+
         try:
             inv = LA.pinv2(Kglob)
         except LA.LinAlgError as err:
@@ -412,7 +415,7 @@ class GaussianProcess:
             except LA.LinAlgError as err:
                 print("pinvh failed: %s. Switching to pinv2" % err)
                 inv = None
-                
+
         # alpha is the vector of regression coefficients of GaussianProcess
         alpha = sp.dot(inv, self.y.ravel())
 
@@ -420,7 +423,7 @@ class GaussianProcess:
             self.inverse = inv
             self.Kglob = Kglob
         self.alpha = sp.array(alpha)
-        
+
 
     def predict(self, atomslist=None, eigs_t=None, ivs_t=None):
         """
@@ -438,12 +441,12 @@ class GaussianProcess:
             An array with shape (n_eval, 3) for a Gaussian Process trained on an array
             of shape (n_samples, 3) with the Best Linear Unbiased Prediction at x.
         """
-        
+
         if atomslist is not None:
             ivs_t, eigs_t = self.testatoms_get_features(atomslist)
         elif (eigs_t is None or ivs_t is None):
             return None
-        
+
         # Check input shapes
         n_eval, _ = ivs_t[0].shape
         n_samples_y, _ = self.y.shape
@@ -473,14 +476,14 @@ class GaussianProcess:
 
         # reshape tensor onto a 2D array tiled with 3x3 matrix blocks
         k3D = my_tensor_reshape(kglob)
-        
+
         # Predictor
         return sp.dot(k3D, self.alpha).reshape(n_eval,3)
 
 
     ####################################################################################################
 
-    
+
     def fit_sollich(self, X=None, y=None):
         """
         The Gaussian Process model fitting method.
@@ -501,7 +504,7 @@ class GaussianProcess:
             A fitted Gaussian Process model object awaiting data to perform
             predictions.
         """
-           
+
         if X:
             K_list = self.calc_scalar_kernel_matrices(X)
         else:
@@ -521,8 +524,8 @@ class GaussianProcess:
                 Kglob += K3D
         Kglob = my_tensor_reshape(Kglob)
         # # all channels merged into one covariance matrix
-        # # K^{glob}_{ij} = \sum_{k = 1}^{N_{IVs}} w_k D_{k, ij} |v_k^i\rangle \langle v_k^j | 
-        
+        # # K^{glob}_{ij} = \sum_{k = 1}^{N_{IVs}} w_k D_{k, ij} |v_k^i\rangle \langle v_k^j |
+
         try:
             inv = LA.pinv2(Kglob)
         except LA.LinAlgError as err:
@@ -532,7 +535,7 @@ class GaussianProcess:
             except LA.LinAlgError as err:
                 print("pinvh failed: %s. Switching to pinv2" % err)
                 inv = None
-                
+
         # alpha is the vector of regression coefficients of GaussianProcess
         alpha = sp.dot(inv, self.y.ravel())
 
@@ -540,7 +543,7 @@ class GaussianProcess:
             self.inverse = inv
             self.Kglob = Kglob
         self.alpha = sp.array(alpha)
-        
+
 
     def predict_sollich(self, atomslist=None, eigs_t=None, ivs_t=None):
         """
@@ -558,12 +561,12 @@ class GaussianProcess:
             An array with shape (n_eval, 3) for a Gaussian Process trained on an array
             of shape (n_samples, 3) with the Best Linear Unbiased Prediction at x.
         """
-        
+
         if atomslist is not None:
             ivs_t, eigs_t = self.testatoms_get_features(atomslist)
         elif (eigs_t is None or ivs_t is None):
             return None
-        
+
         # Check input shapes
         n_eval, _ = ivs_t[0].shape
         n_samples_y, _ = self.y.shape
@@ -593,6 +596,98 @@ class GaussianProcess:
 
         # reshape tensor onto a 2D array tiled with 3x3 matrix blocks
         k3D = my_tensor_reshape(kglob)
-        
+
         # Predictor
         return sp.dot(k3D, self.alpha).reshape(n_eval,3)
+
+
+    def atomsdb_get_scalar_features(self, at_db, return_features=False):
+        """
+        type(at_db) == quippy.io.AtomsList
+        """
+        EIGs = []
+        Y = []
+        exps, r_cuts = self.iv_params[0], self.iv_params[1]
+
+        # each iv is an independent information channel
+        for feature, (r_cut, exp) in enumerate(zip(r_cuts, exps)):
+            print("Evaluating database feature %d of %d..." % (feature+1, exps.size))
+            ivs = sp.zeros((sp.asarray(at_db.n).sum(), 3))
+            eigs = sp.zeros((sp.asarray(at_db.n).sum(), self.n_eigs))
+            i = 0
+            for atoms in at_db:
+                atoms.set_cutoff(8.0)
+                atoms.calc_connect()
+                for at_idx in frange(atoms.n):
+                    if feature == 0: Y.append(sp.array(atoms.force[at_idx])) # get target forces
+                    ivs[i] = internal_vector(atoms, at_idx, exp, r_cut, do_calc_connect=False)
+                    eigs[i] = coulomb_mat_eigvals(atoms, at_idx, r_cut, do_calc_connect=False, n_eigs=self.n_eigs)
+                    i+=1
+            IVs.append(ivs)
+            EIGs.append(eigs)
+        # rescale eigenvalues descriptor
+        if self.normalise_scalar:
+            eig_means = sp.array([e[e.nonzero()[0], e.nonzero()[1]].mean() for e in EIGs])
+            eig_stds = sp.array([e[e.nonzero()[0], e.nonzero()[1]].std() for e in EIGs])
+            eig_stds[eig_stds == 0.] = 1.
+            EIGs = [(e - mean) / std for e, mean, std in zip(EIGs, eig_means, eig_stds)]
+        # rescale internal vector to have average length = 1
+        if self.normalise_ivs:
+            # iv_stds = [e[e.nonzero()[0], e.nonzero()[1]].std() for e in IVs]
+            # iv_stds[iv_stds == 0.] = 1.
+            iv_means = [sp.array([LA.norm(vector) for vector in e]).mean() for e in IVs]
+            IVs = [iv / mean for iv, mean in zip(IVs, iv_means)]
+
+        # output cleanup: add machine epsilon if force is exactly zero
+        Y = sp.asarray(Y)
+        Y[sp.array(map(LA.norm, Y)) <= MACHINE_EPSILON] = 10 * MACHINE_EPSILON * sp.ones(3)
+
+        # correlations wrt actual forces
+        IV_corr = sp.array([sp.diagonal(spdist.cdist(Y, iv, metric='correlation')).mean() for iv in IVs])
+
+	if return_features:
+	    return IVs, EIGs, Y, IV_corr, iv_means, eig_means, eig_stds
+	else:
+	    self.ivs = IVs
+	    self.eigs = EIGs
+	    self.y = Y
+	    self.iv_corr = IV_corr
+        self.iv_means = iv_means
+        self.eig_means, self.eig_stds = eig_means, eig_stds
+
+
+    def testatoms_get_scalar_features(self, atomslist, iv_means=None, eig_means=None, eig_stds=None):
+        """
+        type(atomslist) == quippy.io.AtomsList
+        """
+        IVs = []
+        EIGs = []
+        exps, r_cuts = self.iv_params[0], self.iv_params[1]
+
+        if not iv_means:
+            iv_means = self.iv_means
+        if not (eig_means or eig_stds):
+            eig_means, eig_stds = self.eig_means, self.eig_stds
+
+        # each iv is an independent information channel
+        for feature, (r_cut, exp) in enumerate(zip(r_cuts, exps)):
+            print("Evaluating test set feature %d of %d..." % (feature+1, exps.size))
+            ivs = sp.zeros((sp.asarray(atomslist.n).sum(), 3))
+            eigs = sp.zeros((sp.asarray(atomslist.n).sum(), self.n_eigs))
+            i = 0
+            for atoms in atomslist:
+                atoms.set_cutoff(8.0)
+                atoms.calc_connect()
+                for at_idx in frange(atoms.n):
+                    ivs[i] = internal_vector(atoms, at_idx, exp, r_cut, do_calc_connect=False)
+                    eigs[i] = coulomb_mat_eigvals(atoms, at_idx, r_cut, do_calc_connect=False, n_eigs=self.n_eigs)
+                    i+=1
+            IVs.append(ivs)
+            EIGs.append(eigs)
+        # rescale eigenvalues descriptor
+        if self.normalise_scalar:
+            EIGs = [(e - eig_means[i]) / eig_stds[i] for i,e in enumerate(EIGs)]
+        # rescale internal vector to have average length = 1
+        if self.normalise_ivs:
+            IVs = [iv / mean for iv, mean in zip(IVs, iv_means)]
+	    return IVs, EIGs
